@@ -7,6 +7,7 @@ from pathlib import Path
 
 import google.auth
 import googleapiclient.discovery
+from googleapiclient.errors import HttpError
 
 
 NETWORK = "global/networks/default"
@@ -17,7 +18,14 @@ def snapshot_name(instance_name):
     return f"base-snapshot-{instance_name}"
 
 
-def build_clone_body(instance_name, zone, snapshot, machine_type):
+def build_image_body(snapshot):
+    return {
+        "name": snapshot.replace("base-snapshot-", "base-image-", 1),
+        "sourceSnapshot": f"global/snapshots/{snapshot}",
+    }
+
+
+def build_clone_body(instance_name, zone, image, machine_type):
     return {
         "name": instance_name,
         "machineType": f"zones/{zone}/machineTypes/{machine_type}",
@@ -26,7 +34,7 @@ def build_clone_body(instance_name, zone, snapshot, machine_type):
                 "boot": True,
                 "autoDelete": True,
                 "initializeParams": {
-                    "sourceSnapshot": f"global/snapshots/{snapshot}"
+                    "sourceImage": f"global/images/{image}"
                 },
             }
         ],
@@ -64,6 +72,18 @@ def wait_for_zone_operation(compute, project, zone, operation_name):
         time.sleep(1)
 
 
+def wait_for_global_operation(compute, project, operation_name):
+    while True:
+        result = compute.globalOperations().get(
+            project=project, operation=operation_name
+        ).execute()
+        if result.get("status") == "DONE":
+            if "error" in result:
+                raise RuntimeError(f"Operation {operation_name} failed: {result['error']}")
+            return
+        time.sleep(1)
+
+
 def source_boot_disk(compute, project, zone, instance_name):
     instance = compute.instances().get(
         project=project, zone=zone, instance=instance_name
@@ -75,18 +95,43 @@ def source_boot_disk(compute, project, zone, instance_name):
 
 
 def create_snapshot(compute, project, zone, disk, name):
+    try:
+        compute.snapshots().get(project=project, snapshot=name).execute()
+        print(f"Snapshot {name} already exists.")
+        return
+    except HttpError as error:
+        if error.resp.status != 404:
+            raise
+
     operation = compute.disks().createSnapshot(
         project=project, zone=zone, disk=disk, body={"name": name}
     ).execute()
     wait_for_zone_operation(compute, project, zone, operation["name"])
 
 
-def create_and_time_clone(compute, project, zone, instance_name, snapshot, machine_type):
+def create_image(compute, project, snapshot):
+    body = build_image_body(snapshot)
+    image = body["name"]
+    try:
+        compute.images().get(project=project, image=image).execute()
+        print(f"Image {image} already exists.")
+        return image
+    except HttpError as error:
+        if error.resp.status != 404:
+            raise
+
+    print(f"Creating image {image} from snapshot {snapshot}...")
+    operation = compute.images().insert(project=project, body=body).execute()
+    wait_for_global_operation(compute, project, operation["name"])
+    return image
+
+
+def create_and_time_clone(compute, project, zone, instance_name, image, machine_type):
     started = time.perf_counter()
     operation = compute.instances().insert(
         project=project,
         zone=zone,
-        body=build_clone_body(instance_name, zone, snapshot, machine_type),
+        body=build_clone_body(instance_name, zone, image, machine_type),
     ).execute()
     wait_for_zone_operation(compute, project, zone, operation["name"])
     return time.perf_counter() - started
@@ -118,6 +163,7 @@ def main():
     snapshot = snapshot_name(args.source_instance)
     print(f"Creating snapshot {snapshot} from disk {disk}...")
     create_snapshot(compute, project, args.zone, disk, snapshot)
+    image = create_image(compute, project, snapshot)
 
     timings = []
     for number in range(1, 4):
@@ -128,7 +174,7 @@ def main():
             project,
             args.zone,
             clone_name,
-            snapshot,
+            image,
             args.machine_type,
         )
         timings.append((clone_name, duration))

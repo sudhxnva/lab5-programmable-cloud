@@ -2,6 +2,6 @@
 
 | Instance | Creation time (seconds) |
 | --- | ---: |
-| flask-clone-1 | 28.799 |
-| flask-clone-2 | 26.899 |
-| flask-clone-3 | 28.069 |
+| image-clone-1 | 9.667 |
+| image-clone-2 | 13.429 |
+| image-clone-3 | 14.572 |

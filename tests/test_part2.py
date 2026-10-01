@@ -18,11 +18,20 @@ def test_snapshot_name_is_derived_from_source_instance():
     assert part2.snapshot_name("flask-tutorial-vm") == "base-snapshot-flask-tutorial-vm"
 
 
-def test_clone_body_uses_snapshot_as_boot_disk_source():
+def test_image_body_uses_snapshot_as_source():
+    part2 = load_part2_module()
+
+    assert part2.build_image_body("base-snapshot-flask-tutorial-vm") == {
+        "name": "base-image-flask-tutorial-vm",
+        "sourceSnapshot": "global/snapshots/base-snapshot-flask-tutorial-vm",
+    }
+
+
+def test_clone_body_uses_custom_image_as_boot_disk_source():
     part2 = load_part2_module()
 
     body = part2.build_clone_body(
-        "flask-clone-1", "us-west1-b", "base-snapshot-flask-tutorial-vm", "e2-micro"
+        "flask-clone-1", "us-west1-b", "base-image-flask-tutorial-vm", "e2-micro"
     )
 
     assert body["machineType"] == "zones/us-west1-b/machineTypes/e2-micro"
@@ -31,7 +40,7 @@ def test_clone_body_uses_snapshot_as_boot_disk_source():
             "boot": True,
             "autoDelete": True,
             "initializeParams": {
-                "sourceSnapshot": "global/snapshots/base-snapshot-flask-tutorial-vm"
+                "sourceImage": "global/images/base-image-flask-tutorial-vm"
             },
         }
     ]
